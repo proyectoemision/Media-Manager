@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>media-manager</title>
+  <script src="js/obs-websocket-js.js"></script>
+  <style>
+    body{
+      font-family: Arial, sans-serif;
+      background:#111;
+      color:#fff;
+      padding:30px;
+      overflow-x:auto;
+    }
+    h1{
+      margin:5px 0;
+    }
+
+    .section{
+      background:#1e1e1e;
+      border-radius:10px;
+      padding:20px;
+      margin-bottom:30px;
+    }
+    .section.busqueda{
+      display:inline-flex;
+      align-items:center;
+      gap:15px;
+      padding:10px 15px;
+      max-width:320px;
+    }
+
+    /*──────── Controles ────────*/
+    .section.busqueda input[type=text]{
+      width:160px;
+      padding:6px 8px;
+      font-size:14px;
+    }
+    .section.busqueda button{
+      font-size:14px;
+      padding:6px 10px;
+    }
+    button{
+      font-size:16px;
+      padding:6px 12px;
+      cursor:pointer;
+      background:#007bff;
+      border:none;color:#fff;
+      border-radius:5px;
+    }
+    input[type=text]{
+      width:250px;
+      padding:10px;
+      font-size:16px;
+      border-radius:5px;
+      border:1px solid #444;
+    }
+
+    /*──────── Tabla de vídeos ────────*/
+    .tabla-scroll{
+      background:#444;
+      max-height:80vh;
+      overflow-y:auto;
+      overflow-x:hidden;
+      scrollbar-gutter:stable both-edges;
+    }
+    table{
+      width:100%;
+      border-collapse:collapse;
+      background:#222;}
+    th,td{
+      padding:10px;
+      border:1px solid #444;
+      text-align:left;}
+    th{
+      background:#007bff;
+      color:#fff;
+    }
+    tr:hover{
+      background:#333;
+      cursor:pointer;
+    }
+    tr.seleccionado{
+      background:#0055aa!important;
+    }
+
+    html,body{
+      height:100%;
+      margin:0;
+      overflow:hidden;
+    }
+  </style>
+</head>
+<body>
+  <h1>📂 Media‑Manager</h1>
+
+  <div class="section busqueda">
+    <input type="text" id="busquedaNombre" placeholder="Ej: Mivideo.mp4" />
+    <button onclick="buscarPorNombre()">🔍</button>
+  </div>
+
+  <div class="tabla-scroll">
+    <h2>🎬 Lista y detalles <button onclick="cargarLista()">🔄</button></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Archivo</th><th>Duración⏳</th>
+          <th>Timecode⏱️</th><th>FPS🎞️</th><th>Tamaño🗃️</th><th>Acción</th>
+        </tr>
+      </thead>
+      <tbody id="tablaVideos"><tr><td colspan="7">Cargando...</td></tr></tbody>
+    </table>
+  </div>
+
+<script>
+const obs = new OBSWebSocket();
+
+/*──────── Utilidades ────────*/
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const segundosAHHMMSS = s=>{
+  const h=Math.floor(s/3600),m=Math.floor(s%3600/60),q=Math.floor(s%60);
+  return `${h}`.padStart(2,'0')+':'+`${m}`.padStart(2,'0')+':'+`${q}`.padStart(2,'0');
+};
+
+// Conexion con OBS
+async function conectarOBS(){
+  try{await obs.connect('ws://localhost:4455','123456');
+      console.log('🟢 Conectado a OBS');
+  }catch(e){console.error('❌ OBS:',e);}
+}
+
+/*──────── Cargar lista ────────*/
+function cargarLista(){
+  const tbody=document.getElementById('tablaVideos');
+  fetch('http://localhost:3000/listar-archivos')
+    .then(r=>r.json())
+    .then(files=>{
+      if(!files.length){tbody.innerHTML='<tr><td colspan="7">No hay videos.</td></tr>';return;}
+      tbody.innerHTML='';
+      files.forEach((f,i)=>{
+        const tr=document.createElement('tr');
+        tr.id=`vid_${i+1}`;
+        tr.innerHTML=`
+          <td>${i+1}</td><td>${f}</td>
+          <td class=duracion>Cargando…</td>
+          <td class=timecode>Cargando…</td>
+          <td class=fps>Cargando…</td>
+          <td class=tamano>Cargando…</td>
+          <td><button onclick="borrarArchivo('${f}')">🗑️</button></td>`;
+        tr.onclick=()=>{tbody.querySelectorAll('tr').forEach(r=>r.classList.remove('seleccionado'));tr.classList.add('seleccionado');};
+        tbody.appendChild(tr);
+        mostrarDetalles(f,tr);
+      });
+    })
+    .catch(e=>{console.error('❌ lista:',e);tbody.innerHTML='<tr><td colspan=7>Error.</td></tr>';});
+}
+
+// funsión para mostrar los meta datos 
+function mostrarDetalles(nombre,fila){
+  fetch(`http://localhost:3000/metadata?archivo=${encodeURIComponent(nombre)}`)
+    .then(r=>r.json())
+    .then(d=>{
+      const fmt=d.format, st=d.streams.find(s=>s.codec_type==='video');
+      fila.querySelector('.duracion').textContent  = segundosAHHMMSS(fmt.duration||0);
+      let tc=(fmt.tags&&fmt.tags.timecode)||(st.tags&&st.tags.timecode)||'01:00:00;00';
+      fila.querySelector('.timecode').textContent  = tc.replace(/:([^:]*)$/,';$1');
+      fila.querySelector('.fps').textContent       = `${eval(st.r_frame_rate).toFixed(2)} fps`;
+      fila.querySelector('.tamano').textContent    = `${(fmt.size/1048576).toFixed(2)} MB`;
+    })
+    .catch(e=>console.error('❌ meta',nombre,e));
+}
+
+/*──────── Buscar ────────*/
+function buscarPorNombre(){
+  const val=document.getElementById('busquedaNombre').value.trim().toLowerCase();
+  if(!val)return alert('⚠️ Ingresa un nombre.');
+  let found=false;
+  document.querySelectorAll('#tablaVideos tr').forEach(r=>{
+    const nombre=r.children[1]?.textContent?.trim().toLowerCase();
+    if(nombre===val){
+      r.scrollIntoView({behavior:'smooth',block:'center'});
+      r.click();found=true;
+    }
+  });
+  if(!found)alert('❌ No se encontró.');
+}
+
+/*──────── Borrar ────────*/
+async function borrarArchivo(nombre){
+  if(!confirm(`¿Eliminar "${nombre}" y su escena?`))return;
+
+  /* 1. quitar escena en OBS */
+  try{await obs.call('RemoveScene',{sceneName:nombre.replace(/\.[^.]+$/,'')});}
+  catch(e){if(e.code!=='resource-not-found')console.warn('OBS:',e.code||e);}
+
+  /* 2. esperar medio segundo para liberar el handle en Windows */
+  await sleep(500);
+
+  /* 3. solicitar borrado al backend */
+  try{
+    const res=await fetch('http://localhost:3000/borrar',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({archivo:nombre})
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||`HTTP ${res.status}`);
+    alert('✅ Archivo eliminado.');
+    cargarLista();
+  }catch(e){
+    console.error('❌ borrar:',e);
+    alert('❌ No se pudo borrar:\n'+e.message);
+  }
+}
+
+
+
+conectarOBS();
+cargarLista();
+setTimeout(cargarLista, 3000);
+</script>
+</body>
+</html>

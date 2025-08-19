@@ -1,0 +1,7 @@
+npm install express cors fluent-ffmpeg dotenv
+
+npm start
+
+npm init -y
+npm install express fluent-ffmpeg ffprobe-static dotenv cors
+npm install ffprobe-static
